@@ -15,22 +15,15 @@ import (
 
 	"net/http"
 
-	"github.com/AdRoll/goamz/aws"
-	"github.com/AdRoll/goamz/s3"
 	redigo "github.com/garyburd/redigo/redis"
 )
 
 type Configuration struct {
-	AccessKey          string
-	SecretKey          string
-	Bucket             string
-	Region             string
 	RedisServerAndPort string
 	Port               int
 }
 
 var config = Configuration{}
-var aws_bucket *s3.Bucket
 var redisPool *redigo.Pool
 
 func main() {
@@ -41,22 +34,11 @@ func main() {
 		panic("Error reading conf")
 	}
 
-	initAwsBucket()
 	InitRedis()
 
 	fmt.Println("Running on port", config.Port)
 	http.HandleFunc("/", handler)
 	http.ListenAndServe(":"+strconv.Itoa(config.Port), nil)
-}
-
-func initAwsBucket() {
-	expiration := time.Now().Add(time.Hour * 1)
-	auth, err := aws.GetAuth(config.AccessKey, config.SecretKey, "", expiration) //"" = token which isn't needed
-	if err != nil {
-		panic(err)
-	}
-
-	aws_bucket = s3.New(auth, aws.GetRegion(config.Region)).Bucket(config.Bucket)
 }
 
 func InitRedis() {
@@ -82,7 +64,7 @@ var makeSafeFileName = regexp.MustCompile(`[#<>:"/\|?*\\]`)
 type RedisFile struct {
 	FileName string
 	Folder   string
-	S3Path   string
+	Path     string
 	// Optional - we use are Teamwork.com but feel free to rmove
 	FileId      int64 `json:",string"`
 	ProjectId   int64 `json:",string"`
@@ -93,7 +75,7 @@ func getFilesFromRedis(ref string) (files []*RedisFile, err error) {
 
 	// Testing - enable to test. Remove later.
 	if 1 == 0 && ref == "test" {
-		files = append(files, &RedisFile{FileName: "test.zip", Folder: "", S3Path: "test/test.zip"}) // Edit and dplicate line to test
+		files = append(files, &RedisFile{FileName: "test.zip", Folder: "", Path: "test/test.zip"}) // Edit and dplicate line to test
 		return
 	}
 
@@ -167,16 +149,9 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Read file from S3, log any errors
-		rdr, err := aws_bucket.GetReader(file.S3Path)
+		rdr, err := os.Open(file.Path)
 		if err != nil {
-			switch t := err.(type) {
-			case *s3.Error:
-				if t.StatusCode == 404 {
-					log.Printf("File not found. %s", file.S3Path)
-				}
-			default:
-				log.Printf("Error downloading \"%s\" - %s", file.S3Path, err.Error())
-			}
+			log.Printf("Error loading \"%s\" - %s", file.Path, err.Error())
 			continue
 		}
 
